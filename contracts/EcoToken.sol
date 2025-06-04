@@ -126,5 +126,39 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
         // Emit tax collected event
         emit TaxCollected(from, taxAmount, burnAmount, treasuryAmount);
     }
+
+    function stake(uint256 amount) external nonReentrant {
+        require(amount > 0, "Cannot stake 0 tokens");
+
+            // Claim any existing rewards first
+        _claimReward();
+        
+        // Transfer tokens to this contract
+        _transfer(msg.sender, address(this), amount);
+        
+        // Update stake
+        stakes[msg.sender] = Stake({
+            amount: stakes[msg.sender].amount + amount,
+            timestamp: block.timestamp,
+            rewardRate: REWARD_RATE
+        });
+
+             totalStaked += amount;
+        
+        emit Staked(msg.sender, amount);
+    }
+
+   function claimReward() external nonReentrant {
+        _claimReward();
+    }
     
+    function _claimReward() internal {
+        uint256 reward = calculateReward(msg.sender);
+        if(reward > 0) {
+            _mint(msg.sender,reward);
+            stakes[msg.sender].timestamp = block.timestamp;
+            emit RewardClaimed(msg.sender,reward);
+        }
+    }
+
 }
