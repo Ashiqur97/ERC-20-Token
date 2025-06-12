@@ -57,7 +57,7 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
         mapping(address => bool) hasVoted;
     }
     
-       mapping(uint256 => Proposal) public proposals;
+    mapping(uint256 => Proposal) public proposals;
     uint256 public proposalCount;
     uint256 public constant VOTING_DELAY = 1 days;
     uint256 public constant VOTING_PERIOD = 7 days;
@@ -67,7 +67,7 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
     address public treasuryWallet;
     address public burnWallet = 0x000000000000000000000000000000000000dEaD;
     
-        // Events
+    // Events
     event Staked(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 amount);
     event RewardClaimed(address indexed user, uint256 amount);
@@ -78,8 +78,9 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
     event VestingScheduleCreated(address indexed beneficiary, uint256 amount, uint256 startTime, uint256 duration, uint256 cliff);
     event TokensReleased(address indexed beneficiary, uint256 amount);
     event CommunityRewardClaimed(address indexed user, uint256 amount);
-
-       modifier onlyAfter(uint256 time) {
+    
+    // Modifiers
+    modifier onlyAfter(uint256 time) {
         require(block.timestamp >= time, "Action not allowed yet");
         _;
     }
@@ -89,7 +90,28 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
         _;
     }
     
-      function _update(
+    /**
+     * @dev Constructor that sets up the initial token distribution
+     */
+    constructor(address _treasuryWallet) 
+        ERC20("EcoToken", "ECO")
+        Ownable(msg.sender)
+    {
+        require(_treasuryWallet != address(0), "Invalid treasury address");
+        treasuryWallet = _treasuryWallet;
+        
+        // Mint initial supply to deployer
+        _mint(msg.sender, INITIAL_SUPPLY - REWARD_POOL_ALLOCATION);
+        
+        // Initialize community reward pool
+        communityRewardPool = REWARD_POOL_ALLOCATION;
+        _mint(address(this), REWARD_POOL_ALLOCATION);
+    }
+    
+    /**
+     * @dev Override _transfer to implement tax mechanism
+     */
+    function _update(
         address from,
         address to,
         uint256 amount
@@ -126,11 +148,14 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
         // Emit tax collected event
         emit TaxCollected(from, taxAmount, burnAmount, treasuryAmount);
     }
-
+    
+    /**
+     * @dev Stake tokens to earn rewards
+     */
     function stake(uint256 amount) external nonReentrant {
         require(amount > 0, "Cannot stake 0 tokens");
-
-            // Claim any existing rewards first
+        
+        // Claim any existing rewards first
         _claimReward();
         
         // Transfer tokens to this contract
@@ -142,23 +167,100 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
             timestamp: block.timestamp,
             rewardRate: REWARD_RATE
         });
-
-             totalStaked += amount;
+        
+        totalStaked += amount;
         
         emit Staked(msg.sender, amount);
     }
-
-   function claimReward() external nonReentrant {
+    
+    /**
+     * @dev Unstake tokens
+     */
+    function unstake(uint256 amount) external nonReentrant {
+        require(amount > 0, "Cannot unstake 0 tokens");
+        require(stakes[msg.sender].amount >= amount, "Insufficient staked balance");
+        
+        // Claim rewards first
+        _claimReward();
+        
+        // Update stake
+        stakes[msg.sender].amount -= amount;
+        totalStaked -= amount;
+        
+        // Transfer tokens back to user
+        _transfer(address(this), msg.sender, amount);
+        
+        emit Unstaked(msg.sender, amount);
+    }
+    
+    /**
+     * @dev Claim staking rewards
+     */
+    function claimReward() external nonReentrant {
         _claimReward();
     }
     
+    /**
+     * @dev Internal function to calculate and claim rewards
+     */
     function _claimReward() internal {
         uint256 reward = calculateReward(msg.sender);
-        if(reward > 0) {
-            _mint(msg.sender,reward);
+        if (reward > 0) {
+            // Mint new tokens as reward
+            _mint(msg.sender, reward);
             stakes[msg.sender].timestamp = block.timestamp;
-            emit RewardClaimed(msg.sender,reward);
+            emit RewardClaimed(msg.sender, reward);
         }
     }
-
+    
+    /**
+     * @dev Calculate pending rewards for a staker
+     */
+    function calculateReward(address user) public view returns (uint256) {
+        Stake memory userStake = stakes[user];
+        if (userStake.amount == 0) return 0;
+        
+        uint256 timeStaked = block.timestamp - userStake.timestamp;
+        uint256 reward = (userStake.amount * userStake.rewardRate * timeStaked) / (REWARD_INTERVAL * 100);
+        return reward;
+    }
+    
+    /**
+     * @dev Create a new governance proposal
+     */
+    function createProposal(string memory description) external {
+        require(balanceOf(msg.sender) >= PROPOSAL_THRESHOLD, "Insufficient balance to create proposal");
+        
+        proposalCount++;
+        Proposal storage newProposal = proposals[proposalCount];
+        newProposal.id = proposalCount;
+        newProposal.description = description;
+        newProposal.voteCount = 0;
+        newProposal.deadline = block.timestamp + VOTING_PERIOD;
+        newProposal.executed = false;
+        newProposal.proposer = msg.sender;
+        
+        emit ProposalCreated(proposalCount, msg.sender);
+    }
+    
+    /**
+     * @dev Vote on a proposal
+     */
+    function vote(uint256 proposalId, bool support) external {
+        require(proposalId > 0 && proposalId <= proposalCount, "Invalid proposal ID");
+        require(block.timestamp <= proposals[proposalId].deadline, "Voting period has ended");
+        require(!proposals[proposalId].hasVoted[msg.sender], "Already voted");
+        
+        uint256 voterBalance = balanceOf(msg.sender);
+        require(voterBalance > 0, "No voting power");
+        
+        proposals[proposalId].hasVoted[msg.sender] = true;
+        
+        if (support) {
+            proposals[proposalId].voteCount += voterBalance;
+        }
+        
+        emit Voted(proposalId, msg.sender, support, voterBalance);
+    }
+ 
 }
