@@ -111,42 +111,63 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
     /**
      * @dev Override _transfer to implement tax mechanism
      */
+    // Debug event to track tax calculation
+    event DebugTaxCalculation(
+        address indexed from,
+        address indexed to,
+        uint256 amount,
+        uint256 taxAmount,
+        uint256 burnAmount,
+        uint256 treasuryAmount,
+        uint256 transferAmount
+    );
+
     function _update(
         address from,
         address to,
         uint256 amount
     ) internal virtual override {
-        // Skip tax for minting, burning, or owner transfers
-        if (from == address(0) || to == address(0) || from == owner() || to == owner()) {
+        // Skip tax for minting or burning
+        if (from == address(0) || to == address(0)) {
             super._update(from, to, amount);
             return;
         }
         
-        // Skip if this is a tax transfer
-        if (from == burnWallet || to == burnWallet || from == treasuryWallet || to == treasuryWallet) {
+        // Skip tax for transfers to/from tax-exempt addresses
+        // Also skip tax for transfers to the staking contract
+        if (from == burnWallet || to == burnWallet || 
+            from == treasuryWallet || to == treasuryWallet ||
+            to == address(this)) {
             super._update(from, to, amount);
             return;
         }
         
-        // Calculate tax
+        // Calculate tax - 2% of the amount (200 / 10000 = 2%)
         uint256 taxAmount = (amount * TAX_RATE) / TAX_DIVISOR;
         uint256 burnAmount = taxAmount / 2;
         uint256 treasuryAmount = taxAmount - burnAmount;
         uint256 transferAmount = amount - taxAmount;
         
-        // Process tax distribution
-        if (burnAmount > 0) {
-            super._update(from, burnWallet, burnAmount);
-        }
-        if (treasuryAmount > 0) {
-            super._update(from, treasuryWallet, treasuryAmount);
+        // Emit debug event
+        emit DebugTaxCalculation(from, to, amount, taxAmount, burnAmount, treasuryAmount, transferAmount);
+        
+        if (taxAmount > 0) {
+            // Process tax distribution
+            if (burnAmount > 0) {
+                super._update(from, burnWallet, burnAmount);
+            }
+            if (treasuryAmount > 0) {
+                super._update(from, treasuryWallet, treasuryAmount);
+            }
         }
         
         // Transfer the remaining amount to recipient
         super._update(from, to, transferAmount);
         
-        // Emit tax collected event
-        emit TaxCollected(from, taxAmount, burnAmount, treasuryAmount);
+        // Emit tax collected event if tax was applied
+        if (taxAmount > 0) {
+            emit TaxCollected(from, taxAmount, burnAmount, treasuryAmount);
+        }
     }
     
     /**
@@ -158,8 +179,8 @@ contract EcoToken is ERC20, Ownable, ReentrancyGuard {
         // Claim any existing rewards first
         _claimReward();
         
-        // Transfer tokens to this contract
-        _transfer(msg.sender, address(this), amount);
+        // Transfer tokens to this contract (using _update to avoid tax)
+        _update(msg.sender, address(this), amount);
         
         // Update stake
         stakes[msg.sender] = Stake({
