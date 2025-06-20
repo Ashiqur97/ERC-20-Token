@@ -1,4 +1,4 @@
-# EcoToken - ERC20 Token Project
+# EcoToken - ERC20 Token Project!
 
 A simple and user-friendly ERC20 token implementation using Solidity and Hardhat. This token is designed for eco-friendly initiatives and rewards.
 
